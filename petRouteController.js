@@ -310,3 +310,140 @@ exports.resetWalkingData = async (req, res) => {
         res.status(500).json({ message: 'Failed to reset walking data', error: err });
     }
 }
+
+exports.addpet= async (req, res) => {
+    try {
+        const { name, dob, breed, image, description, owner } = req.body;
+        
+  
+        const newPet = new PetProfile({ name, dob, breed, image, description, owner });
+        const savedPet = await newPet.save();
+        console.log('o',savedPet); // Log the saved pet details
+  
+        // Update user's petIds array
+        await User.findByIdAndUpdate(owner, { $push: { petIds: savedPet._id } });
+  
+        await createNotification(owner, `a new pet ${savedPet.name} added.`);
+  
+        res.status(201).json({ message: 'Pet profile created', pet: savedPet });
+    } catch (error) {
+        console.error('Error creating pet profile:', error);
+        res.status(500).json({ error: 'Failed to create pet profile' });
+    }
+  }
+  
+  
+exports.getAllPets = async (req, res) => {
+    if (!req.session.userId || req.session.role !== 'user') {
+        return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    try {
+        const pets = await PetProfile.find({ owner: req.session.userId });
+
+        // Calculate and format age for each pet
+        const formattedPets = pets.map(pet => {
+            const birthDate = new Date(pet.dob);
+            const today = new Date();
+            let years = today.getFullYear() - birthDate.getFullYear();
+            let months = today.getMonth() - birthDate.getMonth();
+            if (months < 0) {
+                years--;
+                months += 12;
+            }
+            const formattedAge = years > 0 ? `${years} years ${months} months` : `${months} months`;
+            return { ...pet.toObject(), age: formattedAge };
+        });
+
+        res.status(200).json(formattedPets);
+    } catch (err) {
+        console.error('Error fetching pets:', err);
+        res.status(500).json({ message: 'Failed to load pets' });
+    }
+}
+
+exports.getPetById = async (req, res) => {
+    try {
+        console.log(`Fetching pet with ID: ${req.params.id}`); // Log the pet ID
+        const pet = await PetProfile.findById(req.params.id).populate('owner', 'name email');
+        if (!pet) {
+            console.error(`Pet not found for ID: ${req.params.id}`); // Log if pet not found
+            return res.status(404).json({ message: 'Pet not found' });
+        }
+        console.log(`Pet found:`, pet); // Log the pet details
+        res.json(pet);
+    } catch (err) {
+        console.error(`Error fetching pet with ID: ${req.params.id}`, err); // Log the error
+        res.status(500).json({ message: 'Server error' });
+    }
+}
+
+// tarek
+exports. deletepet= async (req, res) => {
+    try {
+        const { petId } = req.params;
+
+        // Remove the pet from the PetProfile collection
+        const pet = await PetProfile.findByIdAndDelete(petId);
+        if (!pet) {
+            return res.status(404).json({ error: 'Pet not found' });
+        }
+
+        // Remove the pet ID from the petIds array in the User schema
+        await User.updateMany(
+            { petIds: petId },
+            { $pull: { petIds: petId } }
+        );
+
+        // delete pet logic from adoption 
+        // Remove all adoption requests for this pet
+        await AdoptionRequest.deleteMany({ petId });
+
+        await createNotification(pet.owner, ` ${pet.name} removed.`);
+
+        res.status(200).json({ message: 'Pet profile deleted', pet });
+    } catch (error) {
+        console.error('Error deleting pet profile:', error);
+        res.status(500).json({ error: 'Failed to delete pet profile' });
+    }
+}
+
+// tarek
+exports.updatePet = async (req, res) => {
+    const petId = req.params.petId;
+    const { name, dob, breed, description, image, vetAppointments } = req.body;
+  
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+  
+        pet.name = name || pet.name;
+        pet.dob = dob || pet.dob;
+        pet.breed = breed || pet.breed;
+        pet.description = description || pet.description;
+        pet.image = image || pet.image;
+  
+        if (vetAppointments) {
+            vetAppointments.forEach((appointment) => {
+                const existingAppointment = pet.vetAppointments.find(
+                    (a) => a._id && a._id.toString() === appointment._id
+                );
+                if (existingAppointment) {
+                    existingAppointment.doctorName = appointment.doctorName;
+                    existingAppointment.address = appointment.address;
+                    existingAppointment.dateOfAppointment = appointment.dateOfAppointment;
+                } else {
+                    pet.vetAppointments.push(appointment);
+                }
+            });
+        }
+  
+        const updatedPet = await pet.save();
+        await createNotification(pet.owner, `${pet.name}'s profile updated.`);
+  
+        res.status(200).json({ message: 'Pet profile updated', pet: updatedPet });
+    } catch (err) {
+        console.error('Error updating pet profile:', err);
+        res.status(500).json({ message: 'Failed to update pet profile', error: err });
+    }
+  }
