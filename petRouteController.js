@@ -223,3 +223,90 @@ exports.deleteVetAppointment =async (req, res) => {
         res.status(500).json({ message: 'Failed to delete appointment', error: err });
     }
 }
+
+exports.addHealthLog = async (req, res) => {
+    const { petId } = req.params;
+    const { date, weight, diet, medicalNotes } = req.body;
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+        pet.healthLogs.push({ date, weight, diet, medicalNotes });
+        const updatedPet = await pet.save();
+        res.status(201).json({ message: 'Health log added', pet: updatedPet });
+    } catch (err) {
+        console.error('Error adding health log:', err);
+        res.status(500).json({ message: 'Failed to add health log', error: err });
+    }
+}
+
+
+exports.getHealthLogs =async (req, res) => {
+    const { petId } = req.params;
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+        res.status(200).json({ healthLogs: pet.healthLogs });
+    } catch (err) {
+        console.error('Error fetching health logs:', err);
+        res.status(500).json({ message: 'Failed to fetch health logs', error: err });
+    }
+}
+
+
+exports.getHealthLogByDate = async (req, res) => {
+    const { petId, date } = req.params;
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+        const log = pet.healthLogs.find(l => new Date(l.date).toISOString().slice(0,10) === new Date(date).toISOString().slice(0,10));
+        if (!log) return res.status(404).json({ message: 'Health log not found for this date' });
+        res.status(200).json({ healthLog: log });
+    } catch (err) {
+        console.error('Error fetching health log by date:', err);
+        res.status(500).json({ message: 'Failed to fetch health log', error: err });
+    }
+}
+
+
+exports.updatewalkingData = async (req, res) => {
+    const { petId } = req.params;
+    const { walkedHours, walkedDistance } = req.body;
+
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+      
+        pet.totalWalkedHours = (pet.totalWalkedHours || 0) + walkedHours;
+        pet.totalWalkedDistance = (pet.totalWalkedDistance || 0) + walkedDistance;
+     
+        pet.avgWalkedHours = pet.totalWalkedHours > 0 ? pet.totalWalkedHours / pet.totalWalkedDistance : 0;
+        pet.avgWalkedDistance = pet.totalWalkedDistance > 0 ? pet.totalWalkedDistance / pet.totalWalkedHours : 0;
+
+        const updatedPet = await pet.save();
+        res.status(200).json({ message: 'Walking data updated successfully', pet: updatedPet });
+    } catch (err) {
+        console.error('Error updating walking data:', err);
+        res.status(500).json({ message: 'Failed to update walking data', error: err });
+    }
+}
+
+exports.resetWalkingData = async (req, res) => {
+    const { petId } = req.params;
+
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+
+        // Reset walking data
+        pet.totalWalkedHours = 0;
+        pet.avgWalkedHours = 0;
+        pet.totalWalkedDistance = 0;
+        pet.avgWalkedDistance = 0;
+
+        const updatedPet = await pet.save();
+        res.status(200).json({ message: 'Walking data reset successfully', pet: updatedPet });
+    } catch (err) {
+        console.error('Error resetting walking data:', err);
+        res.status(500).json({ message: 'Failed to reset walking data', error: err });
+    }
+}
