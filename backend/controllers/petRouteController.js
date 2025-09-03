@@ -2,6 +2,42 @@ const PetProfile = require('../models/PetProfile.js'); // Ensure this file exist
 const User = require('../models/User'); // Ensure this file exists and is correctly implemented
 const Notification = require('../models/Notification'); // Ensure this file exists and is correctly implemented
 const AdoptionRequest = require('../models/AdoptionRequest');
+const multer = require('multer');
+const path = require('path');
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'public/uploads/pets/'); // Make sure this directory exists
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'pet-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5MB limit
+    },
+    fileFilter: function (req, file, cb) {
+        const allowedTypes = /jpeg|jpg|png|gif/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+        
+        if (mimetype && extname) {
+            return cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed'));
+        }
+    }
+});
+
+// Export the upload middleware for use in routes
+exports.upload = upload;
+
+
 
 
 const createNotification = async (userId, message, type = 'info') => {
@@ -15,15 +51,17 @@ const createNotification = async (userId, message, type = 'info') => {
 
 
 
+
+
   exports.addvaccination = async (req, res) => {
     const petId = req.params.petId;
-    const { vaccineName, date, notes, nextVaccinationDate } = req.body;
+    const { vaccineName, date, notes } = req.body;
   
     try {
         const pet = await PetProfile.findById(petId);
         if (!pet) return res.status(404).json({ message: 'Pet not found' });
   
-        pet.vaccinations.push({ vaccineName, date, notes, nextVaccinationDate });
+        pet.vaccinations.push({ vaccineName, date, notes });
   
         const updatedPet = await pet.save();
         await createNotification(pet.owner, ` ${pet.name}'s vaccination added.`);
@@ -38,7 +76,7 @@ const createNotification = async (userId, message, type = 'info') => {
 
   exports.updatevaccination = async (req, res) => {
     const { petId, vaccinationId } = req.params;
-    const { vaccineName, date, notes, nextVaccinationDate } = req.body;
+    const { vaccineName, date, notes } = req.body;
 
     try {
         console.log(`Editing vaccination for petId: ${petId}, vaccinationId: ${vaccinationId}`); // Log IDs
@@ -58,7 +96,6 @@ const createNotification = async (userId, message, type = 'info') => {
         vaccination.vaccineName = vaccineName || vaccination.vaccineName;
         vaccination.date = date || vaccination.date;
         vaccination.notes = notes || vaccination.notes;
-        vaccination.nextVaccinationDate = nextVaccinationDate || vaccination.nextVaccinationDate;
 
         const updatedPet = await pet.save();
         console.log('Updated pet after vaccination edit:', updatedPet); // Log the updated pet details
@@ -90,19 +127,7 @@ exports.deletevaccination =async (req, res) => {
             return res.status(404).json({ message: 'Vaccination not found' });
         }
 
-        // Check if the vaccination date has passed
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const vaccinationDate = new Date(vaccination.nextVaccinationDate);
-        vaccinationDate.setHours(0, 0, 0, 0);
-
-        if (vaccinationDate > today) {
-            return res.status(403).json({ 
-                message: 'Cannot delete vaccination before its due date',
-                dueDate: vaccinationDate
-            });
-        }
-
+        // Allow deletion of any vaccination record
         const updatedVaccinations = pet.vaccinations.filter(
             (vaccination) => vaccination._id.toString() !== vaccinationId
         );
@@ -196,15 +221,15 @@ exports.deleteVetAppointment =async (req, res) => {
             return res.status(404).json({ message: 'Appointment not found' });
         }
 
-        // Check if the appointment date has passed
+        // Check if the appointment date has passed - only allow deletion of future appointments
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const appointmentDate = new Date(appointment.dateOfAppointment);
         appointmentDate.setHours(0, 0, 0, 0);
 
-        if (appointmentDate > today) {
+        if (appointmentDate < today) {
             return res.status(403).json({ 
-                message: 'Cannot delete appointment before its scheduled date',
+                message: 'Cannot delete past appointments',
                 appointmentDate: appointmentDate
             });
         }
@@ -223,6 +248,11 @@ exports.deleteVetAppointment =async (req, res) => {
         res.status(500).json({ message: 'Failed to delete appointment', error: err });
     }
 }
+
+
+
+
+
 
 exports.addHealthLog = async (req, res) => {
     const { petId } = req.params;
@@ -268,69 +298,45 @@ exports.getHealthLogByDate = async (req, res) => {
 }
 
 
-exports.updatewalkingData = async (req, res) => {
-    const { petId } = req.params;
-    const { walkedHours, walkedDistance } = req.body;
-
-    try {
-        const pet = await PetProfile.findById(petId);
-        if (!pet) return res.status(404).json({ message: 'Pet not found' });
-      
-        pet.totalWalkedHours = (pet.totalWalkedHours || 0) + walkedHours;
-        pet.totalWalkedDistance = (pet.totalWalkedDistance || 0) + walkedDistance;
-     
-        pet.avgWalkedHours = pet.totalWalkedHours > 0 ? pet.totalWalkedHours / pet.totalWalkedDistance : 0;
-        pet.avgWalkedDistance = pet.totalWalkedDistance > 0 ? pet.totalWalkedDistance / pet.totalWalkedHours : 0;
-
-        const updatedPet = await pet.save();
-        res.status(200).json({ message: 'Walking data updated successfully', pet: updatedPet });
-    } catch (err) {
-        console.error('Error updating walking data:', err);
-        res.status(500).json({ message: 'Failed to update walking data', error: err });
-    }
-}
-
-exports.resetWalkingData = async (req, res) => {
-    const { petId } = req.params;
-
-    try {
-        const pet = await PetProfile.findById(petId);
-        if (!pet) return res.status(404).json({ message: 'Pet not found' });
-
-        // Reset walking data
-        pet.totalWalkedHours = 0;
-        pet.avgWalkedHours = 0;
-        pet.totalWalkedDistance = 0;
-        pet.avgWalkedDistance = 0;
-
-        const updatedPet = await pet.save();
-        res.status(200).json({ message: 'Walking data reset successfully', pet: updatedPet });
-    } catch (err) {
-        console.error('Error resetting walking data:', err);
-        res.status(500).json({ message: 'Failed to reset walking data', error: err });
-    }
-}
-
 exports.addpet= async (req, res) => {
     try {
-        const { name, dob, breed, image, description, owner } = req.body;
+        console.log('=== ADD PET REQUEST ===');
+        console.log('Request body:', req.body);
+        console.log('Request file:', req.file);
+        console.log('Session info:', req.session);
         
+        const { name, dob, breed, gender, imageUrl, description, owner } = req.body;
+        
+        // Handle image - either from file upload or URL
+        let image = imageUrl; // Default to URL if provided
+        if (req.file) {
+            // If file was uploaded, use the file path
+            image = `/uploads/pets/${req.file.filename}`;
+            console.log('Using uploaded file:', image);
+        } else if (imageUrl) {
+            console.log('Using image URL:', imageUrl);
+        }
   
-        const newPet = new PetProfile({ name, dob, breed, image, description, owner });
+        console.log('Creating pet with data:', { name, dob, breed, gender, image, description, owner });
+        
+        const newPet = new PetProfile({ name, dob, breed, gender, image, description, owner });
         const savedPet = await newPet.save();
-        console.log('o',savedPet); // Log the saved pet details
+        console.log('Pet saved successfully:', savedPet._id);
   
         // Update user's petIds array
         await User.findByIdAndUpdate(owner, { $push: { petIds: savedPet._id } });
+        console.log('Updated user petIds for owner:', owner);
   
         await createNotification(owner, `a new pet ${savedPet.name} added.`);
+        console.log('Notification created for owner:', owner);
   
         res.status(201).json({ message: 'Pet profile created', pet: savedPet });
     } catch (error) {
         console.error('Error creating pet profile:', error);
-        res.status(500).json({ error: 'Failed to create pet profile' });
+        res.status(500).json({ error: 'Failed to create pet profile', details: error.message });
     }
   }
+  
   
   
 exports.getAllPets = async (req, res) => {
@@ -378,6 +384,10 @@ exports.getPetById = async (req, res) => {
     }
 }
 
+
+
+// tarek
+
 // tarek
 exports. deletepet= async (req, res) => {
     try {
@@ -395,7 +405,7 @@ exports. deletepet= async (req, res) => {
             { $pull: { petIds: petId } }
         );
 
-        // delete pet logic from adoption 
+        // delete pet logic from adoption extend part
         // Remove all adoption requests for this pet
         await AdoptionRequest.deleteMany({ petId });
 
@@ -407,6 +417,9 @@ exports. deletepet= async (req, res) => {
         res.status(500).json({ error: 'Failed to delete pet profile' });
     }
 }
+
+
+
 
 // tarek
 exports.updatePet = async (req, res) => {
@@ -447,3 +460,50 @@ exports.updatePet = async (req, res) => {
         res.status(500).json({ message: 'Failed to update pet profile', error: err });
     }
   }
+
+
+// naimur
+// naimur
+exports.updatewalkingData = async (req, res) => {
+    const { petId } = req.params;
+    const { walkedHours, walkedDistance } = req.body;
+
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+      
+        pet.totalWalkedHours = (pet.totalWalkedHours || 0) + walkedHours;
+        pet.totalWalkedDistance = (pet.totalWalkedDistance || 0) + walkedDistance;
+     
+        pet.avgWalkedHours = pet.totalWalkedHours > 0 ? pet.totalWalkedHours / pet.totalWalkedDistance : 0;
+        pet.avgWalkedDistance = pet.totalWalkedDistance > 0 ? pet.totalWalkedDistance / pet.totalWalkedHours : 0;
+
+        const updatedPet = await pet.save();
+        res.status(200).json({ message: 'Walking data updated successfully', pet: updatedPet });
+    } catch (err) {
+        console.error('Error updating walking data:', err);
+        res.status(500).json({ message: 'Failed to update walking data', error: err });
+    }
+}
+
+exports.resetWalkingData = async (req, res) => {
+    const { petId } = req.params;
+
+    try {
+        const pet = await PetProfile.findById(petId);
+        if (!pet) return res.status(404).json({ message: 'Pet not found' });
+
+        // Reset walking data
+        pet.totalWalkedHours = 0;
+        pet.avgWalkedHours = 0;
+        pet.totalWalkedDistance = 0;
+        pet.avgWalkedDistance = 0;
+
+        const updatedPet = await pet.save();
+        res.status(200).json({ message: 'Walking data reset successfully', pet: updatedPet });
+    } catch (err) {
+        console.error('Error resetting walking data:', err);
+        res.status(500).json({ message: 'Failed to reset walking data', error: err });
+    }
+}
+
